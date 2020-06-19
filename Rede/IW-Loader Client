@@ -1,0 +1,157 @@
+#!/bin/bash
+
+
+IFS_old=$IFS;IFS=$'\n'
+echo $IFS
+thisDir=$(dirname $0)
+thatDir="/tmp"
+configDir=~/.itlwm
+
+function save_password()	
+{
+	stty -echo
+	read -p "Please enter the password (Mac login password):" password
+	stty echo
+	echo -e
+	echo "$password" > $configDir/password.txt
+}
+
+function test_password()
+{
+	local test_result=0
+	read password < $configDir/password.txt
+	echo "$password" | sudo -S touch $thisDir/.tmp
+	if [[ ! -e "$thisDir/.tmp" ]];then
+		test_result=0
+	else
+		echo "$password" | sudo -S mount -uw /
+		killall Finder
+		echo "$password" | sudo -S rm $thisDir/.tmp
+		test_result=1
+	fi
+	return $test_result
+}
+
+function main_task()
+{
+	if [[ ! -e "$configDir/ssid.txt" ]];then
+		touch $configDir/ssid.txt
+	fi
+	echo ""
+	content=`cat $configDir/ssid.txt`
+	if [[ "$content" != "" ]];then
+		echo "【Wi-Fi List】"
+	fi
+	kextindex=1
+	declare -a kextdict
+	for kextname in `cat $configDir/ssid.txt`
+	do
+		echo $kextindex":"$kextname
+		kextdict[$kextindex]=$kextname
+		kextindex=$(($kextindex+1))
+	done
+	echo "Enter SSID number to connect existing listed Wi-Fi profile "
+	echo "Press (a) to add new connection, Press q to quit the connection,"
+	echo "Press (d) to delete existing Wi-Fi profile "
+	echo "------------------------------------------------------"
+
+	read -p"Select the desired operation：" index
+
+	if [[ "$index" = "q" ]];then
+		echo "-------------- Itlwm Connection load script--------------"
+		IFS=$IFS_old;exit 1
+	elif [[ "$index" = "a" ]];then
+		read -p"Wi-Fi Name：" ssid
+		read -p"Wi-Fi Password (no password, Enter to skip)：" psw
+		echo "$ssid:$psw" >> $configDir/ssid.txt
+	elif [[ "$index" = "d" ]];then
+		while :
+		do
+			read -p"Select the Wi-Fi (SSID NAME) to be deleted or enter q to quit the operation：" index
+			if [[ "$index" = "q" ]];then
+				break
+			else
+				selectssid=${kextdict[$index]}
+				sed -i "" "/$selectssid/d" $configDir/ssid.txt
+				echo "Deleted for you【${selectssid}】。"
+				content=`cat $configDir/ssid.txt`
+				if [[ "$content" = "" ]];then
+					break
+				fi
+			fi
+		done
+		echo "--------------Itlwm Connection load script--------------"
+		IFS=$IFS_old;exit 1
+	
+	else
+		selectssid=${kextdict[$index]}
+		ssid=`echo $selectssid | cut -d ":" -f 1`
+		psw=`echo $selectssid | cut -d ":" -f 2`
+
+	fi
+
+	if [[ "$psw" = "" ]];then
+		echo "You want to connect【${ssid}】,No password。"
+	else
+		echo "You want to connect【${ssid}】,password is【${psw}】。"
+	fi
+
+	echo "------------------------------------------------------"
+	echo "Please do not exit the terminal during connection"
+
+	if [[ -d "$thatDir/itlwm.kext" ]];then
+		echo "$password" | sudo -S rm -r $thatDir/itlwm.kext
+	fi
+		
+	echo "$password" | sudo -S cp -r $thisDir/itlwm.kext /tmp
+	echo "$password" | sudo -S /usr/libexec/PlistBuddy -c "Set :IOKitPersonalities:itlwm:WiFiConfig:WiFi_1:ssid ${ssid}" $thatDir/itlwm.kext/Contents/Info.plist
+	echo "$password" | sudo -S /usr/libexec/PlistBuddy -c "Set :IOKitPersonalities:itlwm:WiFiConfig:WiFi_1:password ${psw}" $thatDir/itlwm.kext/Contents/Info.plist
+	echo "$password" | sudo -S chmod -R 755 "$thatDir"/itlwm.kext
+	echo "$password" | sudo -S chmod 644 "$thatDir"/itlwm.kext/Contents/Info.plist
+	echo "$password" | sudo -S chown -R root:wheel "$thatDir"/itlwm.kext
+	echo "$password" | sudo -S codesign --force --deep --sign - $thatDir/itlwm.kext
+	echo "$password" | sudo -S kextutil -q "$thatDir"/itlwm.kext
+}
+
+function main()
+{
+	echo "--------------itlwm Connection load script--------------"
+	if [[ ! -d "$configDir" ]];then
+		mkdir $configDir
+	fi
+
+	result=`kextstat | grep "itlwm"`
+	if [[ "$result" != "" ]];then
+		echo "The driver is already loaded , if you want to reload, please restart the system first"
+		echo "--------------itlwm Connection load script--------------"
+		IFS=$IFS_old;exit 1
+	fi
+
+	if [[ ! -e "$configDir/password.txt" ]];then
+		save_password
+	fi
+
+	i=0
+	while [ $i -lt 3 ]
+	do
+		test_password
+		test_result=$?
+		if [[ "$test_result" == 1 ]];then
+			main_task
+			result=`kextstat | grep "itlwm"`
+			if [[ "$result" != "" ]];then
+				echo "The driver is successful, you can exit the terminal"
+			else
+				echo "The driver is not loaded successfully, please exit the terminal and check whether the driver file is complete"
+			fi
+			echo "--------------itlwm Connection load script--------------"
+			IFS=$IFS_old;exit 1
+		else
+			echo "Sorry, wrong password"
+			save_password
+		fi
+		let i++
+	done
+}
+
+main
